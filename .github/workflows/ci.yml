@@ -33,7 +33,7 @@ jobs:
           log-accepted-android-sdk-licenses: false
 
       - name: Install Android SDK platform
-        run: sdkmanager "platforms;android-37"
+        run: sdkmanager --channel=1 "platforms;android-37.0"
 
       - name: Grant execute permission to Gradle
         run: chmod +x gradlew
