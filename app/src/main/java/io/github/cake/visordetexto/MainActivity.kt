@@ -1,6 +1,8 @@
 package io.github.cake.visordetexto
 
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -21,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -29,6 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import io.github.cake.visordetexto.core.DatosIntentEntrada
+import io.github.cake.visordetexto.core.extraerUriDesdeIntent
 import io.github.cake.visordetexto.core.leerInicio
 import io.github.cake.visordetexto.ui.theme.VisorDeTextoTheme
 import java.io.IOException
@@ -37,53 +42,123 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Solicitud de apertura proveniente de un Intent externo (K-08 / RF-13). */
+private data class SolicitudExterna(
+    val id: Int,
+    val uri: Uri?,
+)
+
 class MainActivity : ComponentActivity() {
+    private var contadorSolicitudes = 0
+    private var solicitudExterna by mutableStateOf<SolicitudExterna?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) {
+            procesarIntentExterno(intent)
+        }
         enableEdgeToEdge()
         setContent {
             VisorDeTextoTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    VisorApp(modifier = Modifier.padding(innerPadding))
+                    VisorApp(
+                        solicitudExterna = solicitudExterna,
+                        onSolicitudConsumida = { solicitudExterna = null },
+                        modifier = Modifier.padding(innerPadding),
+                    )
                 }
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        procesarIntentExterno(intent)
+    }
+
+    private fun procesarIntentExterno(intent: Intent?) {
+        val accion = intent?.action
+        if (accion != Intent.ACTION_VIEW && accion != Intent.ACTION_SEND) return
+
+        val streamUri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+        val clipUri: Uri? = intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+
+        val uriTexto = extraerUriDesdeIntent(
+            DatosIntentEntrada(
+                accion = accion,
+                uriVista = intent.data?.toString(),
+                uriEnvio = streamUri?.toString(),
+                uriClip = clipUri?.toString(),
+            )
+        )
+        val uriResuelta = uriTexto?.let { runCatching { Uri.parse(it) }.getOrNull() }
+        contadorSolicitudes += 1
+        solicitudExterna = SolicitudExterna(id = contadorSolicitudes, uri = uriResuelta)
+    }
 }
 
-/** Contiene el estado y la lógica de apertura (K-02). Solo lee; nunca escribe el archivo. */
+/** Contiene el estado y la lógica de apertura (K-02 + K-08). Solo lee; nunca escribe el archivo. */
 @Composable
-fun VisorApp(modifier: Modifier = Modifier) {
+private fun VisorApp(
+    solicitudExterna: SolicitudExterna?,
+    onSolicitudConsumida: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val contexto = LocalContext.current
     val alcance = rememberCoroutineScope()
     var texto by rememberSaveable { mutableStateOf<String?>(null) }
     var hayError by rememberSaveable { mutableStateOf(false) }
+    var ultimoIdProcesado by rememberSaveable { mutableIntStateOf(0) }
+
+    fun abrirUri(uri: Uri?) {
+        if (uri == null) {
+            hayError = true
+            texto = null
+            return
+        }
+        alcance.launch {
+            val resultado = try {
+                withContext(Dispatchers.IO) {
+                    val entrada = contexto.contentResolver.openInputStream(uri)
+                        ?: throw IOException("No se obtuvo el flujo de entrada")
+                    entrada.use { leerInicio(it) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+            if (resultado == null) {
+                hayError = true
+                texto = null
+            } else {
+                hayError = false
+                texto = resultado.texto
+            }
+        }
+    }
+
+    LaunchedEffect(solicitudExterna?.id) {
+        val solicitud = solicitudExterna ?: return@LaunchedEffect
+        if (solicitud.id != ultimoIdProcesado) {
+            ultimoIdProcesado = solicitud.id
+            abrirUri(solicitud.uri)
+            onSolicitudConsumida()
+        }
+    }
 
     val selector = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         // Si se cancela el selector, uri es null y no pasa nada.
         if (uri != null) {
-            alcance.launch {
-                val resultado = try {
-                    withContext(Dispatchers.IO) {
-                        val entrada = contexto.contentResolver.openInputStream(uri)
-                            ?: throw IOException("No se obtuvo el flujo de entrada")
-                        entrada.use { leerInicio(it) }
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    null
-                }
-                if (resultado == null) {
-                    hayError = true
-                    texto = null
-                } else {
-                    hayError = false
-                    texto = resultado.texto
-                }
-            }
+            abrirUri(uri)
         }
     }
 
