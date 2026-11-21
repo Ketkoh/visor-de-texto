@@ -1,4 +1,3 @@
-
 name: Android CI
 
 on:
@@ -43,3 +42,26 @@ jobs:
 
       - name: Build Android application
         run: ./gradlew assembleDebug --no-daemon
+
+      - name: Guard merged manifests against forbidden permissions and backup (K-34)
+        run: |
+          MANIFESTS=$(find app/build/intermediates/merged_manifests -type f -name "AndroidManifest.xml")
+          if [ -z "$MANIFESTS" ]; then
+            echo "ERROR: No se encontro ningun AndroidManifest.xml combinado."
+            exit 1
+          fi
+
+          echo "=== Permisos encontrados en manifiestos combinados ==="
+          grep -Hn "uses-permission" $MANIFESTS || echo "(Ninguno)"
+
+          if grep -E "android\.permission\.(INTERNET|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|MANAGE_EXTERNAL_STORAGE|READ_MEDIA_[A-Z0-9_]+)" $MANIFESTS | grep -v "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"; then
+            echo "ERROR: Se detecto un permiso prohibido en el manifiesto combinado."
+            exit 1
+          fi
+
+          if grep -F 'android:allowBackup="true"' $MANIFESTS; then
+            echo "ERROR: Se detecto android:allowBackup=\"true\" en el manifiesto combinado."
+            exit 1
+          fi
+
+          echo "OK: Manifiesto verificado sin permisos prohibidos ni allowBackup=true."
