@@ -6,8 +6,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.Locale
 
-/** Pruebas de K-04a contra el corpus de K-33. Se omiten si VISOR_CORPUS no está definida. */
+/** Cada línea de grande_utf8.txt ocupa exactamente 100 bytes (terminador incluido). */
+private const val BYTES_POR_LINEA = 100L
+
+/** Prefijo que debe tener la línea [n] de grande_utf8.txt: equivale a f"L{n:012d}|" de Python. */
+private fun prefijo(n: Long): String = String.format(Locale.ROOT, "L%012d|", n)
+
+/** Lee la línea [n] y comprueba su número y su prefijo. */
+private fun verificarLinea(lector: LectorDeLineas, n: Long) {
+    val lineas = lector.leerLineas(n, 1)
+    assertEquals("la línea $n debe existir", 1, lineas.size)
+    assertEquals(n, lineas[0].numero)
+    assertTrue(
+        "la línea $n debe empezar por ${prefijo(n)} y empieza por '${lineas[0].texto.take(20)}'",
+        lineas[0].texto.startsWith(prefijo(n)),
+    )
+}
+
+/**
+ * Pruebas de K-04a contra el corpus de K-33 (y de K-04c: el mismo código sirve para el corpus de 1 GB
+ * y para el de 3 GB). Se omiten si VISOR_CORPUS no está definida.
+ */
 class CorpusTest {
     @Before
     fun requiereCorpus() {
@@ -62,17 +83,26 @@ class CorpusTest {
     }
 
     @Test
-    fun K04a_corpus_grandeUtf8_10MillonesDeLineas() {
+    fun K04a_corpus_grandeUtf8_lineasSegunTamano() {
         FuenteArchivo(ApoyoPruebas.archivoCorpus("grande_utf8.txt")).use { fuente ->
+            val tamano = fuente.tamano
+            assertEquals("grande_utf8.txt debe tener un tamaño múltiplo de 100 bytes", 0L, tamano % BYTES_POR_LINEA)
+            val esperadas = tamano / BYTES_POR_LINEA
+            println("[K-04a/K-04c] grande_utf8.txt: $tamano bytes, $esperadas líneas esperadas")
+
             val indice = ApoyoPruebas.indiceCompleto(fuente)
-            assertEquals(10_000_000L, indice.totalLineas)
-            assertTrue("guardó ${indice.desplazamientosGuardados}", indice.desplazamientosGuardados <= 10_001)
+            assertEquals(esperadas, indice.totalLineas)
+            val maximo = esperadas / indice.intervalo + 1
+            assertTrue(
+                "guardó ${indice.desplazamientosGuardados}, máximo $maximo",
+                indice.desplazamientosGuardados.toLong() <= maximo,
+            )
+
             val lector = LectorDeLineas(fuente, indice)
-            assertEquals(1L, lector.leerLineas(1, 1)[0].numero)
-            assertTrue(lector.leerLineas(1, 1)[0].texto.startsWith("L000000000001|"))
-            assertTrue(lector.leerLineas(5_000_000, 1)[0].texto.startsWith("L000005000000|"))
-            assertTrue(lector.leerLineas(10_000_000, 1)[0].texto.startsWith("L000010000000|"))
-            assertTrue(lector.leerLineas(10_000_001, 1).isEmpty())
+            verificarLinea(lector, 1L)
+            verificarLinea(lector, esperadas / 2)
+            verificarLinea(lector, esperadas)
+            assertTrue(lector.leerLineas(esperadas + 1, 1).isEmpty())
         }
     }
 }

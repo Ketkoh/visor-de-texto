@@ -35,3 +35,6 @@ google-services.json
 *.hprof
 # Corpus de pruebas generado localmente
 /corpus/
+
+# Corpus de 3 GB para K-04c
+/corpus3/

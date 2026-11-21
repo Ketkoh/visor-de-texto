@@ -117,7 +117,12 @@ class IndiceLineas(
     private fun guardar(desplazamiento: Long) {
         synchronized(cerrojo) {
             if (cantidadGuardada == desplazamientos.size) {
-                desplazamientos = desplazamientos.copyOf(cantidadGuardada * 2)
+                // La duplicación se calcula en Long: con Int, 2^30 * 2 desbordaría a un valor negativo.
+                val nuevaCapacidad = minOf(cantidadGuardada.toLong() * 2L, MAX_DESPLAZAMIENTOS.toLong()).toInt()
+                check(nuevaCapacidad > cantidadGuardada) {
+                    "demasiados desplazamientos indexados ($cantidadGuardada); use un intervalo mayor"
+                }
+                desplazamientos = desplazamientos.copyOf(nuevaCapacidad)
             }
             desplazamientos[cantidadGuardada++] = desplazamiento
         }
@@ -126,5 +131,8 @@ class IndiceLineas(
     private companion object {
         const val LF = 0x0A
         const val CR = 0x0D
+
+        /** Tamaño máximo prudente de un LongArray en la JVM (algunas máquinas virtuales reservan cabecera). */
+        const val MAX_DESPLAZAMIENTOS = Int.MAX_VALUE - 8
     }
 }
